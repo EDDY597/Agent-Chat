@@ -40,14 +40,16 @@ const PROVIDERS = {
   modelscope: { baseURL: "https://api-inference.modelscope.cn/v1" },
   hunyuan: { baseURL: "https://api.hunyuan.cloud.tencent.com/v1" },
   xunfei: { baseURL: "https://spark-api-open.xf-yun.com/v1" },
+  cloudflare: { baseURL: "https://api.cloudflare.com/client/v4/accounts/{acc}/ai/v1", needsAcc: true },
 };
 // 第一方直连平台:界面上合并为「直连」组展示,底层各自路由
 const DIRECT_MEMBERS = ["bigmodel", "hunyuan", "xunfei"];
 const THEMES = [["light", "纯白"], ["dark", "纯黑"], ["glass", "磨砂玻璃"], ["warm", "暖米"]];
+const GROUP_LABELS = { "直连": "直连(官方第一方)", "cloudflare": "Cloudflare Workers AI" };
 const DEFAULTS = {
   debateModels: "modelscope@Qwen/Qwen3.5-35B-A3B,modelscope@ZhipuAI/GLM-4.7-Flash,modelscope@stepfun-ai/Step-3.7-Flash,openrouter@inclusionai/ling-3.0-flash-sante:free",
   judge: "modelscope@ZhipuAI/GLM-5.2",
-  paraWorkers: "siliconflow@Qwen/Qwen2.5-7B-Instruct,modelscope@Qwen/Qwen3.8-Flash-Next,modelscope@stepfun-ai/Step-3.7-Flash,modelscope@meituan-longcat/LongCat-Flash-Lite,openrouter@inclusionai/ling-3.0-flash-sante:free",
+  paraWorkers: "modelscope@Qwen/Qwen3.8-Flash-Next,modelscope@stepfun-ai/Step-3.7-Flash,modelscope@meituan-longcat/LongCat-Flash-Lite,openrouter@inclusionai/ling-3.0-flash-sante:free,openrouter@google/gemma-4-31b-it:free",
   debateRounds: 4,
   timeoutMs: 120000,
   thinking: "default",
@@ -63,6 +65,21 @@ const MODEL_CATALOG = {
     "bigmodel@glm-4-flash-250414",
     "hunyuan@hunyuan-lite",
     "xunfei@spark-lite",
+  ],
+  // Cloudflare Workers AI:免费计划可用(实测过滤掉付费限定模型),需在设置里填令牌+账户 ID
+  cloudflare: [
+    "cloudflare@@cf/qwen/qwen3.8-27b",
+    "cloudflare@@cf/qwen/qwq-32b",
+    "cloudflare@@cf/qwen/qwen3-30b-a3b-fp8",
+    "cloudflare@@cf/openai/gpt-oss-120b",
+    "cloudflare@@cf/openai/gpt-oss-20b",
+    "cloudflare@@cf/meta/llama-4-scout-17b-16e-instruct",
+    "cloudflare@@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "cloudflare@@cf/nvidia/nemotron-3-120b-a12b",
+    "cloudflare@@cf/zai-org/glm-4.7-flash",
+    "cloudflare@@cf/google/gemma-4-26b-a4b-it",
+    "cloudflare@@cf/mistralai/mistral-small-3.1-24b-instruct",
+    "cloudflare@@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
   ],
   modelscope: [
     "Qwen/Qwen3.5-397B-A17B", "Qwen/Qwen3.5-122B-A10B", "Qwen/Qwen3.5-35B-A3B",
@@ -105,7 +122,13 @@ function resolveModel(spec, keys) {
   if (!p) throw new Error(`未知平台 "${name}"`);
   const key = keys[name];
   if (!key) throw new Error(`平台 ${name} 未填 key`);
-  return { provider: name, model, baseURL: p.baseURL, key };
+  let baseURL = p.baseURL;
+  if (p.needsAcc) {
+    const acc = keys[name + "__acc"];
+    if (!acc) throw new Error(`平台 ${name} 需要在设置里填「账户 ID」`);
+    baseURL = baseURL.replace("{acc}", acc);
+  }
+  return { provider: name, model, baseURL: baseURL.replace(/\/+$/, ""), key };
 }
 function resolveChain(specs, keys, log, role) {
   const out = [];
@@ -162,6 +185,11 @@ async function chat(resolved, messages, maxTokens = 2000, timeoutMs = 120000) {
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 150)}`);
       const data = await res.json();
+      // 平台空壳响应:HTTP 200 但 choices 为空/null 且用量全 0(魔搭对"当前无可用实例"的模型会这样回)
+      // 这不是预算不足,重试无意义 → 立即抛出,交给降级链换模型
+      if (!data.choices && !(data.usage?.total_tokens)) {
+        throw new Error("平台返回空壳响应(该模型当前无可用实例/额度用尽),已快速跳过");
+      }
       const choice = data.choices?.[0];
       const text = choice?.message?.content;
       if (!text || !text.trim()) {
@@ -518,7 +546,7 @@ async function onSend() {
   running = true; cancelled = false;
   setSendState(true);
   $("#msgs").insertAdjacentHTML("beforeend",
-    `<div class="msg assistant"><div class="bubble"><div class="status"></div></div></div>`);
+    `<div class="msg assistant"><div class="bubble"><div class="typing"><i></i><i></i><i></i></div><div class="status"></div></div></div>`);
   const bubbleEl = $("#msgs").lastElementChild;
   const statusEl = bubbleEl.querySelector(".status");
   $("#msgs").scrollTop = $("#msgs").scrollHeight;
@@ -562,6 +590,7 @@ async function onSend() {
     } else {
       const keys = loadKeys(), cfg = loadCfg();
       const judgeChain = resolveChain([cfg.judge, ...JUDGE_FALLBACKS], keys, log, "直聊");
+      log("🤖 正在思考 …", "hl");
       const history = s.msgs.filter((m) => m.kind === "user" || m.kind === "chat").slice(-12)
         .map((m) => ({ role: m.kind === "user" ? "user" : "assistant", content: m.text }));
       history[history.length - 1] = { role: "user", content: text };
@@ -638,8 +667,13 @@ function applyTheme(t) {
   }));
 })();
 
-const keyFields = Object.keys(PROVIDERS).map((name) =>
-  `<label>${name} 的 API Key</label><input type="password" id="key-${name}" placeholder="${PROVIDERS[name].baseURL}">`).join("");
+const keyFields = Object.keys(PROVIDERS).map((name) => {
+  const p = PROVIDERS[name];
+  const accField = p.needsAcc
+    ? `<label>${name} 账户 ID(Workers AI 必需)</label><input id="acc-${name}" placeholder="32 位十六进制账户 ID,在控制台右侧栏">`
+    : "";
+  return `<label>${name} 的 API Key</label><input type="password" id="key-${name}" placeholder="${p.baseURL}">` + accField;
+}).join("");
 $("#key-fields").innerHTML = keyFields;
 
 // 模型阵容点选芯片
@@ -659,7 +693,7 @@ function renderChips() {
     const savedOrder = load("agentchat_order-" + boxId.replace("#", ""), []); // 用户拖动过的自定义排列
     let html = "";
     for (const [p, models] of Object.entries(cat)) {
-      html += `<div class="plat">${p}</div><div class="chips">`;
+      html += `<div class="plat">${GROUP_LABELS[p] || p}</div><div class="chips">`;
       const hiddenSpecs = load("agentchat_hidden_models", []);
       const specs = models.map((m) => (m.includes("@") ? m : `${p}@${m}`)).filter((s) => !hiddenSpecs.includes(s));
       // 有自定义排列:全部按用户排的顺序渲染(含未选);否则默认 已选优先 + 目录序
@@ -690,6 +724,8 @@ function renderChips() {
     bindDragOnce(box, () => selArr);
     box.querySelectorAll(".chip").forEach((b) => bindChipDrag(b, box, () => selArr, boxId));
     box.querySelectorAll(".chip").forEach((b) => (b.onclick = (e) => {
+      if (Date.now() < suppressClickUntil) return; // 长按进编辑后的余波 click
+
       if (e.target.classList.contains("chipx")) {
         if (b.classList.contains("on")) {
           // 已选:移出阵容(保持编辑态,可连续操作)
@@ -735,6 +771,7 @@ function renderChips() {
 }
 // 长按(350ms)进入拖动,移动到其他选中芯片交换位置,松手按 DOM 顺序写回阵容
 let dragCtx = null, justDragged = false;
+let suppressClickUntil = 0; // 长按进编辑后的短暂窗口内,忽略 click(防误加/误切)
 let editBoxId = null; // 当前处于编辑态(显示×)的阵容盒
 function bindDragOnce(box, getArr) {
   if (box.dataset.dragBound) return;
@@ -743,7 +780,7 @@ function bindDragOnce(box, getArr) {
     if (!dragCtx) return;
     if (!dragCtx.moved) {
       const dx = e.clientX - dragCtx.startX, dy = e.clientY - dragCtx.startY;
-      if (Math.hypot(dx, dy) < 5) return;          // 未超阈值 = 还在点击,不进入拖动
+      if (Math.hypot(dx, dy) < 8) return;          // 未超阈值 = 还在点击,不进入拖动(手指阈值放宽)
       dragCtx.moved = true;
       dragCtx.el.classList.add("dragging");
       document.body.style.touchAction = "none";
@@ -785,13 +822,19 @@ function bindChipDrag(b, box, getArr, boxId) {
     if (editBoxId === boxId) {
       // 编辑态:任意芯片(含未选)按下即待拖,移动超阈值进入拖动
       dragCtx = { el: b, spec: b.dataset.spec, startX: e.clientX, startY: e.clientY, moved: false };
+      try { b.setPointerCapture(e.pointerId); } catch { /* 指针捕获非必需 */ }
       return;
     }
     // 常态:长按任意芯片(含未选)进入编辑态
+    const startX = e.clientX, startY = e.clientY;
     const t = setTimeout(() => {
       editBoxId = boxId;
       box.classList.add("editing");
-      renderChips(); // 渲染「完成」按钮
+      suppressClickUntil = Date.now() + 600; // 长按抬手产生的 click 不当作选中操作
+      renderChips();                          // 重建 DOM(「完成」按钮 + ×)
+      // 关键:长按不抬手也能直接拖 —— 重建后按 spec 找回同一颗芯片并接着当拖动源
+      const again = [...box.querySelectorAll(".chip")].find((x) => x.dataset.spec === b.dataset.spec);
+      if (again) dragCtx = { el: again, spec: again.dataset.spec, startX, startY, moved: false };
     }, 350);
     const c = () => clearTimeout(t);
     b.addEventListener("pointerup", c, { once: true });
@@ -815,6 +858,7 @@ function isFreeSpec(spec) { // 各平台免费语义不同:魔搭全列表免费
   const plat = spec.slice(0, i), m = spec.slice(i + 1);
   if (plat === "openrouter") return /:free$|-free$/i.test(m);
   if (plat === "modelscope") return true;
+  if (plat === "cloudflare") return true; // 列表已由接口侧过滤为免费计划可用
   if (plat === "siliconflow") { const b = paramNameB(m); return b !== null ? b <= 9 : /lite|flash|small/i.test(m); }
   if (DIRECT_MEMBERS.includes(plat)) return /glm-4\.7-flash|glm-4-flash|hunyuan-lite|spark-lite/i.test(m);
   return FREE_KNOWN.test(spec);
@@ -838,8 +882,57 @@ function openModal(boxId, multi, presetGroup) {
 }
 function closeModal() { $("#modal").classList.add("hide"); modalTarget = null; }
 
+// 轻量可用性探测:判断模型当前能否服务(区分"失效""暂时不可用""认证异常")
+//  ok=可服务  dead=确定失效(无 provider/已下架/空壳响应)  unknown=本次没测准(限流/超时/5xx)  auth=key 有问题
+async function probeModel(resolved, timeoutMs = 20000) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    let res;
+    try {
+      res = await fetch(`${resolved.baseURL}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${resolved.key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: resolved.model, messages: [{ role: "user", content: "hi" }], max_tokens: 64 }),
+        signal: ctrl.signal,
+      });
+    } finally { clearTimeout(timer); }
+    if (res.status === 401 || res.status === 403) return "auth";
+    if (res.status === 429) return "unknown";
+    const body = await res.text();
+    if (!res.ok) {
+      if (/no provider supported|not exist|invalid model|deprecated|not available/i.test(body)) return "dead";
+      return res.status >= 500 ? "unknown" : "dead";
+    }
+    let d = {};
+    try { d = JSON.parse(body); } catch { return "unknown"; }
+    if (!d.choices && !(d.usage && d.usage.total_tokens)) return "dead"; // 平台空壳响应
+    return "ok";
+  } catch {
+    return "unknown"; // 超时/网络异常:不代表模型失效,不删
+  }
+}
+
 async function fetchPlatformIds(platform, keys) {
   const p = resolveModel(platform + "@x", keys);
+  if (platform === "cloudflare") {
+    // Workers AI 原生模型清单:过滤掉非文本生成 + 付费计划限定(require_workers_paid)
+    const root = p.baseURL.replace(/\/ai\/v1$/, "");
+    const res = await fetch(`${root}/ai/models/search?per_page=100`, {
+      headers: { Authorization: `Bearer ${p.key}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    const raw = d.result;
+    const items = Array.isArray(raw) ? raw : (raw && raw.result) || [];
+    const isPaid = (m) => (m.properties || []).some((x) => x.property_id === "require_workers_paid" && String(x.value).toLowerCase() === "true");
+    const ids = items
+      .filter((m) => (m.task || {}).name === "Text Generation" && !isPaid(m))
+      .map((m) => m.name).sort();
+    if (!ids.length) throw new Error("没有免费计划可用的文本模型");
+    return ids;
+  }
   const res = await fetch(`${p.baseURL}/models`, {
     headers: { Authorization: `Bearer ${p.key}` },
     signal: AbortSignal.timeout(15000),
@@ -941,10 +1034,19 @@ $("#modal-cancel").onclick = closeModal;
 $("#modal").onclick = (e) => { if (e.target.id === "modal") closeModal(); };
 (function initSettings() {
   const keys = loadKeys(), cfg = loadCfg();
-  for (const name of Object.keys(PROVIDERS)) $("#key-" + name).value = keys[name] || "";
+  for (const name of Object.keys(PROVIDERS)) {
+    $("#key-" + name).value = keys[name] || "";
+    if (PROVIDERS[name].needsAcc) { const el = $("#acc-" + name); if (el) el.value = keys[name + "__acc"] || ""; }
+  }
   selDebate = (cfg.debateModels || "").split(",").map((s) => s.trim()).filter(Boolean);
   selJudge = cfg.judge || "";
   selPara = (cfg.paraWorkers || "").split(",").map((s) => s.trim()).filter(Boolean);
+  // 首次安装:默认阵容只保留确认免费的模型(防止默认配置消耗付费额度)
+  if (!localStorage.getItem("agentchat_cfg")) {
+    selDebate = selDebate.filter(isFreeSpec);
+    selPara = selPara.filter(isFreeSpec);
+    if (selJudge && !isFreeSpec(selJudge)) selJudge = "modelscope@ZhipuAI/GLM-5.2";
+  }
   paramState = { rounds: String(cfg.debateRounds || 4), timeout: String(cfg.timeoutMs || 120000), thinking: cfg.thinking || "default" };
   renderParams();
   renderChips();
@@ -999,6 +1101,26 @@ $("#cfg-check").onclick = async () => {
       const L = listMap[spec.slice(0, i)];
       if (L && L.ids && !L.ids.includes(spec.slice(i + 1))) dead.push(spec);
     }
+    // 追加:真实可用性探测(清单里有、但平台当前无实例的模型,魔搭会回空壳)
+    const usable = [];
+    for (const spec of sel.filter((s) => !dead.includes(s))) {
+      usable.push(spec);
+    }
+    const bad = [], uncertain = [], authPlats = new Set();
+    for (let i = 0; i < usable.length; i++) {
+      btn.textContent = `体检中 ${i + 1}/${usable.length}…`;
+      let m;
+      try { m = resolveModel(usable[i], keys); } catch { bad.push(usable[i]); continue; }
+      const verdict = await probeModel(m);
+      if (verdict === "dead") bad.push(usable[i]);
+      else if (verdict === "auth") authPlats.add(m.provider);
+      else if (verdict === "unknown") uncertain.push(usable[i]);
+    }
+    dead.push(...bad);
+    if (authPlats.size) {
+      alert(["以下平台认证失败(未改动其模型,请检查 key):", ...[...authPlats]].join(String.fromCharCode(10)));
+    }
+
     if (dead.length) {
       // 直接从阵容和自定义库中移除失效模型
       const deadSet = new Set(dead);
@@ -1013,9 +1135,10 @@ $("#cfg-check").onclick = async () => {
       renderChips();
     }
     const unknown = plats.filter((p) => listMap[p].error).map((p) => `${p}(${listMap[p].error})`);
+    const extra = uncertain.length ? `(${uncertain.length} 个本次未测准,已保留)` : "";
     btn.textContent = dead.length
-      ? `已移除 ${dead.length} 个失效模型`
-      : unknown.length ? `已选模型可用;未能检查:${unknown.join(",")}` : "已选模型全部可用 ✓";
+      ? `已移除 ${dead.length} 个失效模型 ${extra}`
+      : unknown.length ? `已选模型可用;未能检查:${unknown.join(",")}` : `已选模型全部可用 ✓ ${extra}`;
   } catch (e) {
     btn.textContent = "检查失败:" + e.message.slice(0, 40);
   } finally {
@@ -1025,7 +1148,10 @@ $("#cfg-check").onclick = async () => {
 };
 $("#cfg-save").onclick = () => {
   const keys = {};
-  for (const name of Object.keys(PROVIDERS)) { const v = $(`#key-${name}`).value.trim(); if (v) keys[name] = v; }
+  for (const name of Object.keys(PROVIDERS)) {
+    const v = $(`#key-${name}`).value.trim(); if (v) keys[name] = v;
+    if (PROVIDERS[name].needsAcc) { const a = $(`#acc-${name}`); if (a && a.value.trim()) keys[name + "__acc"] = a.value.trim(); }
+  }
   save("agentchat_keys", keys);
   save("agentchat_cfg", {
     debateModels: selDebate.join(",") || DEFAULTS.debateModels,

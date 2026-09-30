@@ -28,5 +28,10 @@
     "baseURL": "https://spark-api-open.xf-yun.com/v1",
     "apiKey": "",
     "apiKeyEnv": "XUNFEI_API_KEY"
+  },
+  "cloudflare": {
+    "baseURL": "https://api.cloudflare.com/client/v4/accounts/<你的账户ID>/ai/v1",
+    "apiKey": "",
+    "apiKeyEnv": "CLOUDFLARE_API_TOKEN"
   }
 }

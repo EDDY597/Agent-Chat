@@ -334,3 +334,14 @@ html[data-theme="glass"] #settings select { backdrop-filter: var(--blur); -webki
 .chipbox.editing .chip:not(.on) .chipx { background: var(--dim); }
 .badge-hidden { flex-shrink: 0; font-size: 10px; padding: 1px 8px; border-radius: 999px;
   background: var(--line); color: var(--dim); font-weight: 600; }
+/* 编辑态:触摸拖拽由应用接管,禁止浏览器把手势当成滚动(否则会发 pointercancel 打断拖动) */
+.chipbox.editing .chip { touch-action: none; -webkit-touch-callout: none; }
+/* 等待回复时的"打字中"指示(避免出现空白气泡) */
+.typing { display: flex; gap: 4px; align-items: center; padding: 3px 0; }
+.typing i {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--dim);
+  animation: dotPulse 1.2s infinite ease-in-out;
+}
+.typing i:nth-child(2) { animation-delay: .18s; }
+.typing i:nth-child(3) { animation-delay: .36s; }
+@keyframes dotPulse { 0%, 60%, 100% { opacity: .28; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
