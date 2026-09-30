@@ -327,3 +327,10 @@ html[data-theme="glass"] #settings select { backdrop-filter: var(--blur); -webki
   cursor: pointer;
 }
 .chipbox.editing .chip:not(.on) { opacity: .55; }
+.chipbox.editing .chip .chipx { display: inline-flex; position: absolute; top: -8px; right: -8px;
+  width: 17px; height: 17px; border-radius: 999px; background: var(--err); color: #fff;
+  font-size: 12px; font-weight: 700; align-items: center; justify-content: center; line-height: 1;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+.chipbox.editing .chip:not(.on) .chipx { background: var(--dim); }
+.badge-hidden { flex-shrink: 0; font-size: 10px; padding: 1px 8px; border-radius: 999px;
+  background: var(--line); color: var(--dim); font-weight: 600; }

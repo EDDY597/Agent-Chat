@@ -660,7 +660,8 @@ function renderChips() {
     let html = "";
     for (const [p, models] of Object.entries(cat)) {
       html += `<div class="plat">${p}</div><div class="chips">`;
-      const specs = models.map((m) => (m.includes("@") ? m : `${p}@${m}`));
+      const hiddenSpecs = load("agentchat_hidden_models", []);
+      const specs = models.map((m) => (m.includes("@") ? m : `${p}@${m}`)).filter((s) => !hiddenSpecs.includes(s));
       // 有自定义排列:全部按用户排的顺序渲染(含未选);否则默认 已选优先 + 目录序
       const inSaved = (s) => savedOrder.includes(s);
       const ordered = savedOrder.length
@@ -676,7 +677,7 @@ function renderChips() {
       for (const spec of ordered) {
         const isDead = dead.includes(spec);
         html += multi
-          ? `<button type="button" class="chip ${selList.indexOf(spec) >= 0 ? "on" : ""} ${isDead ? "dead" : ""}" data-spec="${esc(spec)}" ${isDead ? `title="平台已无此模型"` : ""}>${selList.indexOf(spec) >= 0 ? `<span class="ord">${selList.indexOf(spec) + 1}</span><span class="chipx" data-x="1" title="从阵容移除">×</span>` : ""}${esc(SHORT(spec))}${isDead ? " ⚠" : ""}</button>`
+          ? `<button type="button" class="chip ${selList.indexOf(spec) >= 0 ? "on" : ""} ${isDead ? "dead" : ""}" data-spec="${esc(spec)}" ${isDead ? `title="平台已无此模型"` : ""}>${selList.indexOf(spec) >= 0 ? `<span class="ord">${selList.indexOf(spec) + 1}</span>` : ""}<span class="chipx" data-x="1" title="${selList.indexOf(spec) >= 0 ? "从阵容移除" : "从模型库删除"}">×</span>${esc(SHORT(spec))}${isDead ? " ⚠" : ""}</button>`
           : chipBtn(spec, selList.includes(spec) ? 0 : -1);
       }
       html += `<button type="button" class="chip add" data-add="1">＋ 自定义</button></div>`;
@@ -689,9 +690,18 @@ function renderChips() {
     bindDragOnce(box, () => selArr);
     box.querySelectorAll(".chip").forEach((b) => bindChipDrag(b, box, () => selArr, boxId));
     box.querySelectorAll(".chip").forEach((b) => (b.onclick = (e) => {
-      if (e.target.classList.contains("chipx")) {    // × = 从阵容移除(保持编辑态,可连续删)
-        const i = selArr.indexOf(b.dataset.spec);
-        if (i >= 0) selArr.splice(i, 1);
+      if (e.target.classList.contains("chipx")) {
+        if (b.classList.contains("on")) {
+          // 已选:移出阵容(保持编辑态,可连续操作)
+          if (multi) { const i = selArr.indexOf(b.dataset.spec); if (i >= 0) selArr.splice(i, 1); }
+          else selJudge = "";
+        } else {
+          // 未选:从模型库删除(隐藏),可从"添加模型"里带"已删除"徽标恢复
+          const hid = load("agentchat_hidden_models", []);
+          if (!hid.includes(b.dataset.spec)) hid.push(b.dataset.spec);
+          save("agentchat_hidden_models", hid);
+          save("agentchat_custom_models", loadCustomCatalog().filter((s) => s !== b.dataset.spec));
+        }
         renderChips();
         return;
       }
@@ -881,6 +891,8 @@ async function loadModalModels(force) {
 }
 
 function addSpec(spec) {
+  // 若该模型曾被"从模型库删除",重新添加即恢复
+  save("agentchat_hidden_models", load("agentchat_hidden_models", []).filter((s) => s !== spec));
   const cc = loadCustomCatalog();
   if (!cc.includes(spec)) cc.push(spec);
   save("agentchat_custom_models", cc);
@@ -909,6 +921,7 @@ function renderModelList() {
   const NON_CHAT = /embed|rerank|voice|image|tts|audio|video|ocr|whisper|speech/i;
   const f = modalFilter.toLowerCase();
   const addedSet = new Set([...loadCustomCatalog(), ...selDebate, ...(selJudge ? [selJudge] : []), ...selPara]);
+  const hiddenSet = new Set(load("agentchat_hidden_models", []));
   const rows = rowsAll.filter((spec) => !NON_CHAT.test(spec) && !addedSet.has(spec) && spec.toLowerCase().includes(f))
     .sort((a, b) => (isFreeSpec(b) ? 1 : 0) - (isFreeSpec(a) ? 1 : 0)); // 免费模型置顶
   if (!rows.length) { list.innerHTML = `<div class="merr">没有匹配的模型</div>`; return; }
@@ -917,6 +930,7 @@ function renderModelList() {
     rows.map((spec) =>
       `<div class="mrow" data-spec="${esc(spec)}"><span class="mid">${esc(SHORT(spec))}</span>` +
       (addedSet.has(spec) ? `<span class="badge-added">已添加</span>` : "") +
+      (hiddenSet.has(spec) ? `<span class="badge-hidden">已删除</span>` : "") +
       (isFreeSpec(spec) ? `<span class="badge-free">free</span>` : "") +
       `</div>`).join("");
   list.querySelectorAll(".mrow").forEach((r) => (r.onclick = () => addSpec(r.dataset.spec)));
