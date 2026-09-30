@@ -656,15 +656,23 @@ function renderChips() {
   const render = (boxId, selArr, multi) => {
     // 裁判盒传的是字符串(单选),统一成数组再做展示,交互层再写回各自变量
     const selList = Array.isArray(selArr) ? selArr : (selArr ? [selArr] : []);
+    const savedOrder = load("agentchat_order-" + boxId.replace("#", ""), []); // 用户拖动过的自定义排列
     let html = "";
     for (const [p, models] of Object.entries(cat)) {
       html += `<div class="plat">${p}</div><div class="chips">`;
-      // 已选芯片按阵容顺序置顶渲染(拖动排序才有视觉意义),未选的按库顺序跟随
       const specs = models.map((m) => (m.includes("@") ? m : `${p}@${m}`));
-      const ordered = [
-        ...selList.filter((s) => specs.includes(s)),
-        ...specs.filter((s) => !selList.includes(s)),
-      ];
+      // 有自定义排列:全部按用户排的顺序渲染(含未选);否则默认 已选优先 + 目录序
+      const inSaved = (s) => savedOrder.includes(s);
+      const ordered = savedOrder.length
+        ? [
+            ...savedOrder.filter((s) => specs.includes(s)),
+            ...selList.filter((s) => specs.includes(s) && !inSaved(s)),
+            ...specs.filter((s) => !inSaved(s) && !selList.includes(s)),
+          ]
+        : [
+            ...selList.filter((s) => specs.includes(s)),
+            ...specs.filter((s) => !selList.includes(s)),
+          ];
       for (const spec of ordered) {
         const isDead = dead.includes(spec);
         html += multi
@@ -730,7 +738,7 @@ function bindDragOnce(box, getArr) {
       dragCtx.el.classList.add("dragging");
       document.body.style.touchAction = "none";
     }
-    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest(".chip.on");
+    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest(".chip:not(.add)");
     if (!el || el === dragCtx.el || !box.contains(el)) return;
     if (el.parentNode !== dragCtx.el.parentNode) return; // 拖动限定同平台分组内
     const ons = [...box.querySelectorAll(".chip.on")];
@@ -738,9 +746,10 @@ function bindDragOnce(box, getArr) {
     // 芯片在各组的 .chips 子容器里,参照节点要用同一父容器
     const ref = to < ons.indexOf(dragCtx.el) ? el : el.nextSibling;
     el.parentNode.insertBefore(dragCtx.el, ref);
-    // 即时提交:交换一次同步写回 selArr,避免延迟提交的时序竞争(单选盒无排序,跳过)
+    // 即时提交:整个面板的自定义排列落盘;阵容顺序按视觉顺序重建(单选盒无排序,跳过)
     const arr = getArr();
     if (!Array.isArray(arr)) return;
+    save("agentchat_order-" + box.id, [...box.querySelectorAll(".chip:not(.add)")].map((x) => x.dataset.spec));
     const newOrder = [...box.querySelectorAll(".chip.on")].map((x) => x.dataset.spec);
     arr.length = 0;
     newOrder.forEach((s) => arr.push(s));
@@ -762,16 +771,10 @@ function bindDragOnce(box, getArr) {
 function bindChipDrag(b, box, getArr, boxId) {
   b.addEventListener("pointerdown", (e) => {
     if (e.target.classList.contains("chipx")) return;
+    if (b.classList.contains("add")) return;
     if (editBoxId === boxId) {
-      // 编辑态:已选芯片立即待拖(阈值区分点击/拖动),未选芯片长按 = 退出编辑
-      if (b.classList.contains("on")) {
-        dragCtx = { el: b, spec: b.dataset.spec, startX: e.clientX, startY: e.clientY, moved: false };
-      } else {
-        const t = setTimeout(() => { editBoxId = null; box.classList.remove("editing"); renderChips(); }, 350);
-        const c = () => clearTimeout(t);
-        b.addEventListener("pointerup", c, { once: true });
-        b.addEventListener("pointerleave", c, { once: true });
-      }
+      // 编辑态:任意芯片(含未选)按下即待拖,移动超阈值进入拖动
+      dragCtx = { el: b, spec: b.dataset.spec, startX: e.clientX, startY: e.clientY, moved: false };
       return;
     }
     // 常态:长按任意芯片(含未选)进入编辑态
