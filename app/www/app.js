@@ -654,28 +654,32 @@ function renderChips() {
   const cat = fullCatalog();
   const dead = load("agentchat_dead_models", []);
   const render = (boxId, selArr, multi) => {
+    // 裁判盒传的是字符串(单选),统一成数组再做展示,交互层再写回各自变量
+    const selList = Array.isArray(selArr) ? selArr : (selArr ? [selArr] : []);
     let html = "";
     for (const [p, models] of Object.entries(cat)) {
       html += `<div class="plat">${p}</div><div class="chips">`;
       // 已选芯片按阵容顺序置顶渲染(拖动排序才有视觉意义),未选的按库顺序跟随
       const specs = models.map((m) => (m.includes("@") ? m : `${p}@${m}`));
       const ordered = [
-        ...selArr.filter((s) => specs.includes(s)),
-        ...specs.filter((s) => !selArr.includes(s)),
+        ...selList.filter((s) => specs.includes(s)),
+        ...specs.filter((s) => !selList.includes(s)),
       ];
       for (const spec of ordered) {
         const isDead = dead.includes(spec);
         html += multi
-          ? `<button type="button" class="chip ${selArr.indexOf(spec) >= 0 ? "on" : ""} ${isDead ? "dead" : ""}" data-spec="${esc(spec)}" ${isDead ? `title="平台已无此模型"` : ""}>${selArr.indexOf(spec) >= 0 ? `<span class="ord">${selArr.indexOf(spec) + 1}</span><span class="chipx" data-x="1" title="从阵容移除">×</span>` : ""}${esc(SHORT(spec))}${isDead ? " ⚠" : ""}</button>`
-          : chipBtn(spec, selArr === spec ? 0 : -1);
+          ? `<button type="button" class="chip ${selList.indexOf(spec) >= 0 ? "on" : ""} ${isDead ? "dead" : ""}" data-spec="${esc(spec)}" ${isDead ? `title="平台已无此模型"` : ""}>${selList.indexOf(spec) >= 0 ? `<span class="ord">${selList.indexOf(spec) + 1}</span><span class="chipx" data-x="1" title="从阵容移除">×</span>` : ""}${esc(SHORT(spec))}${isDead ? " ⚠" : ""}</button>`
+          : chipBtn(spec, selList.includes(spec) ? 0 : -1);
       }
       html += `<button type="button" class="chip add" data-add="1">＋ 自定义</button></div>`;
     }
     const box = $(boxId);
-    box.innerHTML = html;
+    box.innerHTML = (editBoxId === boxId ? `<button type="button" class="donebtn">✓ 完成(退出编辑)</button>` : "") + html;
     box.classList.toggle("editing", editBoxId === boxId);
+    const done = box.querySelector(".donebtn");
+    if (done) done.onclick = () => { editBoxId = null; renderChips(); };
     bindDragOnce(box, () => selArr);
-    box.querySelectorAll(".chip.on").forEach((b) => bindChipDrag(b, box, () => selArr, boxId));
+    box.querySelectorAll(".chip").forEach((b) => bindChipDrag(b, box, () => selArr, boxId));
     box.querySelectorAll(".chip").forEach((b) => (b.onclick = (e) => {
       if (e.target.classList.contains("chipx")) {    // × = 从阵容移除(保持编辑态,可连续删)
         const i = selArr.indexOf(b.dataset.spec);
@@ -683,12 +687,16 @@ function renderChips() {
         renderChips();
         return;
       }
-      if (editBoxId === boxId) {                     // 编辑态下点芯片主体 = 退出编辑
-        editBoxId = null;
-        box.classList.remove("editing");
+      if (editBoxId === boxId) {
+        // 编辑态:未选芯片点击 = 加入选区;已选芯片主体点击 = 不做事;✕ 拖后误触由 justDragged 拦
+        if (justDragged) return;
+        if (b.classList.contains("add")) { openModal(boxId, multi, "直连"); return; }
+        if (!b.classList.contains("on")) {
+          if (multi) selArr.push(b.dataset.spec); else selJudge = b.dataset.spec;
+          renderChips();
+        }
         return;
       }
-      if (justDragged) return;                       // 拖拽落定后的 click 不当选择处理
       if (b.classList.contains("add")) {
         openModal(boxId, multi, "直连");
         return;
@@ -698,7 +706,7 @@ function renderChips() {
         const i = selArr.indexOf(spec);
         if (i >= 0) selArr.splice(i, 1); else selArr.push(spec);
       } else {
-        selArr = selArr === spec ? "" : spec;
+        selJudge = selJudge === spec ? "" : spec; // 单选盒:写回全局(原来只改局部,选择不生效)
       }
       renderChips();
     }));
@@ -715,44 +723,66 @@ function bindDragOnce(box, getArr) {
   box.dataset.dragBound = "1";
   box.addEventListener("pointermove", (e) => {
     if (!dragCtx) return;
+    if (!dragCtx.moved) {
+      const dx = e.clientX - dragCtx.startX, dy = e.clientY - dragCtx.startY;
+      if (Math.hypot(dx, dy) < 5) return;          // 未超阈值 = 还在点击,不进入拖动
+      dragCtx.moved = true;
+      dragCtx.el.classList.add("dragging");
+      document.body.style.touchAction = "none";
+    }
     const el = document.elementFromPoint(e.clientX, e.clientY)?.closest(".chip.on");
     if (!el || el === dragCtx.el || !box.contains(el)) return;
+    if (el.parentNode !== dragCtx.el.parentNode) return; // 拖动限定同平台分组内
     const ons = [...box.querySelectorAll(".chip.on")];
     const to = ons.indexOf(el);
     // 芯片在各组的 .chips 子容器里,参照节点要用同一父容器
     const ref = to < ons.indexOf(dragCtx.el) ? el : el.nextSibling;
     el.parentNode.insertBefore(dragCtx.el, ref);
-    // 即时提交:交换一次同步写回 selArr,避免延迟提交的时序竞争
+    // 即时提交:交换一次同步写回 selArr,避免延迟提交的时序竞争(单选盒无排序,跳过)
     const arr = getArr();
+    if (!Array.isArray(arr)) return;
     const newOrder = [...box.querySelectorAll(".chip.on")].map((x) => x.dataset.spec);
     arr.length = 0;
     newOrder.forEach((s) => arr.push(s));
   });
   const finish = () => {
     if (!dragCtx) return;
-    dragCtx.el.classList.remove("dragging");
-    document.body.style.touchAction = "";
+    if (dragCtx.moved) {
+      dragCtx.el.classList.remove("dragging");
+      document.body.style.touchAction = "";
+      justDragged = true;
+      setTimeout(() => (justDragged = false), 300);
+    }
     dragCtx = null;
-    justDragged = true;
-    setTimeout(() => (justDragged = false), 300);
-    renderChips(); // 只刷新序号显示,顺序已在 move 时即时提交
+    renderChips(); // 刷新序号;顺序已在 move 时即时提交
   };
   box.addEventListener("pointerup", finish);
   box.addEventListener("pointercancel", finish);
 }
 function bindChipDrag(b, box, getArr, boxId) {
   b.addEventListener("pointerdown", (e) => {
-    if (e.target.classList.contains("chipx") || !b.classList.contains("on")) return;
+    if (e.target.classList.contains("chipx")) return;
+    if (editBoxId === boxId) {
+      // 编辑态:已选芯片立即待拖(阈值区分点击/拖动),未选芯片长按 = 退出编辑
+      if (b.classList.contains("on")) {
+        dragCtx = { el: b, spec: b.dataset.spec, startX: e.clientX, startY: e.clientY, moved: false };
+      } else {
+        const t = setTimeout(() => { editBoxId = null; box.classList.remove("editing"); renderChips(); }, 350);
+        const c = () => clearTimeout(t);
+        b.addEventListener("pointerup", c, { once: true });
+        b.addEventListener("pointerleave", c, { once: true });
+      }
+      return;
+    }
+    // 常态:长按任意芯片(含未选)进入编辑态
     const t = setTimeout(() => {
-      editBoxId = boxId;                        // 进入编辑态:所有已选芯片显示 ×
+      editBoxId = boxId;
       box.classList.add("editing");
-      dragCtx = { el: b, spec: b.dataset.spec };
-      b.classList.add("dragging");
-      document.body.style.touchAction = "none"; // 拖动期间禁止页面滚动
+      renderChips(); // 渲染「完成」按钮
     }, 350);
-    const cancel = () => { clearTimeout(t); if (!dragCtx) document.body.style.touchAction = ""; };
-    b.addEventListener("pointerup", cancel, { once: true });
-    b.addEventListener("pointerleave", cancel, { once: true });
+    const c = () => clearTimeout(t);
+    b.addEventListener("pointerup", c, { once: true });
+    b.addEventListener("pointerleave", c, { once: true });
   });
 }
 
