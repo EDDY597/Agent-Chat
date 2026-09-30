@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<title>AgentChat</title>
+<link rel="stylesheet" href="app.css?v=34">
+</head>
+<body>
+
+<!-- 侧栏:会话历史 -->
+<div id="drawer-mask"></div>
+<aside id="drawer">
+  <button id="btn-new" class="primary">＋ 新对话</button>
+  <div id="session-list"></div>
+</aside>
+
+<!-- 主界面 -->
+<div id="app">
+  <header>
+    <button id="btn-menu" class="icon">☰</button>
+    <span id="title">AgentChat</span>
+    <button id="btn-settings" class="icon">⚙</button>
+  </header>
+
+  <main id="msgs"></main>
+
+  <footer>
+    <div id="mode-chips">
+      <button class="mchip" data-mode="debate">🥊 辩论</button>
+      <button class="mchip" data-mode="parallel">🧩 并行</button>
+      <span id="mode-hint"></span>
+    </div>
+    <div id="input-row">
+      <textarea id="input" rows="1" placeholder="输入消息…"></textarea>
+      <button id="btn-send" class="send" aria-label="发送">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4l17.4-7.5c.8-.4.8-1.5 0-1.9L3.4 3.6c-.7-.3-1.5.3-1.3 1.1L4 11l9 1-9 1-1.9 6.3c-.2.8.6 1.4 1.3 1.1z"/></svg>
+      </button>
+    </div>
+  </footer>
+</div>
+
+<!-- 设置(全屏覆盖层,左侧分类菜单) -->
+<div id="settings" class="hide">
+  <header>
+    <button id="btn-back" class="icon" aria-label="返回设置">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <span>设置</span><span></span>
+  </header>
+  <div class="settings-wrap">
+    <nav id="settings-nav">
+      <button class="snav on" data-pane="keys"><span class="ic">🔑</span>API Key</button>
+      <button class="snav" data-pane="look"><span class="ic">🎨</span>皮肤</button>
+      <button class="snav" data-pane="params"><span class="ic">🎛</span>运行参数</button>
+      <button class="snav" data-pane="debate"><span class="ic">🥊</span>辩手阵容</button>
+      <button class="snav" data-pane="judge"><span class="ic">⚖️</span>裁判</button>
+      <button class="snav" data-pane="workers"><span class="ic">🧩</span>工人阵容</button>
+    </nav>
+    <main class="settings-body">
+      <section id="pane-keys" class="spane on">
+        <h3>API Key(仅存本机)</h3>
+        <p class="hint" style="margin:0 0 10px">「直连」= 官方第一方接口;其余为聚合平台。至少填一个。</p>
+        <div id="key-fields"></div>
+      </section>
+      <section id="pane-look" class="spane">
+        <h3>皮肤</h3>
+        <div id="theme-chips" class="chips"></div>
+      </section>
+      <section id="pane-params" class="spane">
+        <h3>运行参数</h3>
+        <label>辩论轮数上限(达成共识自动提前结束)</label>
+        <div id="cfg-rounds" class="optchips"></div>
+        <label>单次调用超时</label>
+        <div id="cfg-timeout" class="optchips"></div>
+        <label>思考模式(思考型模型会先内部推理再作答:更慢但更深,也更容易"空响应")</label>
+        <div id="cfg-thinking" class="optchips"></div>
+      </section>
+      <section id="pane-debate" class="spane">
+        <h3>辩论辩手(多选,点选顺序即出场顺序)</h3>
+        <div id="box-debate" class="chipbox"></div>
+      </section>
+      <section id="pane-judge" class="spane">
+        <h3>裁判(单选,选最稳的旗舰)</h3>
+        <div id="box-judge" class="chipbox"></div>
+      </section>
+      <section id="pane-workers" class="spane">
+        <h3>并行工人(多选,子任务多于工人数时自动轮换)</h3>
+        <div id="box-para" class="chipbox"></div>
+      </section>
+    </main>
+  </div>
+  <div class="settings-foot">
+    <button id="cfg-check" class="ghostbtn">检查已选模型(下架检测)</button>
+    <button id="cfg-save" class="primary">保存设置</button>
+  </div>
+</div>
+
+<!-- 自绘对话框:自动拉取平台模型列表,搜索点选 -->
+<div id="modal" class="hide">
+  <div class="sheet">
+    <h4>添加模型</h4>
+    <div id="modal-plats" class="chips" style="margin-bottom:8px"></div>
+    <div class="searchrow">
+      <input id="modal-search" placeholder="搜索模型…">
+      <button id="modal-refresh" class="ghostbtn" title="重新拉取列表">⟳</button>
+    </div>
+    <div id="modal-list" class="modellist"></div>
+    <div class="modal-foot">
+      <span class="hint" style="margin:0">已自动过滤嵌入/语音/图像类非对话模型</span>
+      <button id="modal-cancel" class="ghostbtn">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=34"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "appId": "com.eddy.agentchat",
+  "appName": "AgentChat",
+  "webDir": "www",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
